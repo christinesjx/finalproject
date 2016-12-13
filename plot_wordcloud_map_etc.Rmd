@@ -1,0 +1,246 @@
+---
+title: "Untitled"
+author: "Jiaxin Sun"
+date: "12/8/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(RCurl)
+library(ROAuth)
+library(streamR)
+library(tidyr)
+library(ggplot2)
+library(grid)
+library(ggmap)
+library(stringr)
+library(twitteR)
+library(tm)
+library(plyr)
+library(dplyr)
+library(stringr)
+library(chron)
+library(wordcloud)
+```
+
+#read in data
+```{r}
+load("weekendmidnight.Rdata")
+
+```
+
+
+#Where are they?
+```{r}
+tweetmap <- function(Day,tweets.df,starttime,endtime){
+  #standard input time: starttime="05:00:00"
+  starttime <- times(starttime)
+  endtime <- times(endtime)
+  map.data <- map_data("state") 
+  #tmp <- tweets.df
+  tweets.df[,intime:=(EAST_Time>=starttime & EAST_Time<=endtime)]
+  tmp <- tweets.df[intime==TRUE]
+  points <- data.frame(x=as.numeric(tmp$place_lon),
+                       y=as.numeric(tmp$place_lat))
+  points <- points[points$y<50,]
+  points <- points[points$x< -60,]
+  points$tag <- points$x< -100 & points$y<30
+  points <- points[points$tag==FALSE,]
+  p <- ggplot(map.data) + geom_polygon(aes(long,lat,group=group),color="darkgrey",fill="black") + 
+    geom_point(data = points,aes(x,y),size=1,alpha=.1,color="yellow") + coord_map( "polyconic" ) + 
+    expand_limits( x = map.data$long, y = map.data$lat ) +
+    theme(axis.line=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(), 
+          axis.title=element_blank(),
+          plot.title = element_text(size=20,angle=0),
+          panel.background=element_blank(),
+          panel.border=element_blank(), 
+          panel.grid.major=element_blank(),
+          plot.background=element_blank(), 
+          plot.margin=unit(0*c(-1.5,-1.5,-1.5,-1.5),"lines")) + 
+    ggtitle(paste(Day,"Tweets between",starttime,"and",endtime,sep = " "))
+  return(p)
+}
+
+
+
+tweetmap("Saturday",tweets.df = Saturdaytweets,starttime = "00:50:00",endtime = "01:50:00")
+tweetmap("Saturday",tweets.df = Sundaytweets,starttime = "01:50:00",endtime = "02:50:00")
+tweetmap("Saturday",tweets.df = tweets,starttime = "02:50:00",endtime = "03:50:00")
+
+locationtxt <- Saturdaytweets$location
+locationtxt <- tolower(unlist(strsplit(locationtxt, " ")))
+lsample <- sample(locationtxt,5000,replace = FALSE)
+wordcloud(lsample, min.freq=3,random.color = TRUE,max.words = 15)
+```
+
+#who are they?
+```{r}
+ggplot(tweets) + geom_bar(aes(lang,fill=lang)) + theme(legend.position="none") + ggtitle("Tweets language")
+ggplot(tweets) + geom_histogram(aes(followers_count,fill=verified),bins = 1000) + xlim(0,10000) + ggtitle("Tweeter's follower") + facet_grid(~verified)
+
+```
+
+
+#word cloud
+```{r}
+tweetTexts<- tweets$text # to extract only the text of each status object
+words<-unlist(strsplit(tweetTexts, " "))
+words<-tolower(words)
+wsample <- sample(words,10000,replace = FALSE)
+#clean_words<-words[-grep("http|@|#|ü|ä|ö", words)] 
+wordcloud(wsample, min.freq=3,colors = brewer.pal(7, "Pastel1"))
+
+tmpword <- sample_n(Saturdaytweets,1000)$text
+tmpword<-tolower(unlist(strsplit(tmpword, " ")))
+myCorpus = Corpus(VectorSource(tmpword))
+myCorpus = tm_map(myCorpus, removePunctuation)
+myCorpus = tm_map(myCorpus, removeNumbers)
+myCorpus = tm_map(myCorpus, removeWords,c(stopwords("SMART"), "thy", "thou", "thee", "the", "and","usa", "but"))
+myDTM = TermDocumentMatrix(myCorpus,
+              control = list(minWordLength = 1))
+m = as.matrix(myDTM)
+m <- sort(rowSums(m), decreasing = TRUE)
+m <- data.frame(word = names(m),freq = m)
+figPath = system.file("examples/t.png",package = "wordcloud2")
+
+letterCloud(m, word = "TWITTER", size = 0.5,color = "skyblue",hoverFunction = htmlwidgets::JS("function hover() {}"))
+
+wordcloud2(m, figPath = figPath, size = 0.5,color = "skyblue",hoverFunction = htmlwidgets::JS("function hover() {}"),)
+```
+
+#plotly language map
+```{r}
+lanplot <- function(day,langu){
+  if(day=="Saturday"){Saturdaytweets.new<-subset(Saturdaytweets, !lang %in% c("und"))}
+  else {Saturdaytweets.new<-subset(Sundaytweets, !lang %in% c("und"))}
+
+  #languages with most users
+  a<-Saturdaytweets.new %>% 
+    group_by(lang) %>%
+    summarise(no_rows = length(lang))
+  a[order(-a$no_rows),]
+  
+  #pick eight languages with most users
+  #selected<-c("es", "tl", "in", "ht", "fr","ar", "pt", "ja")
+  if (langu=="") {
+    return("Please select language!")
+  }
+  else {
+  selected<-langu
+  Saturdaytweets.new<-Saturdaytweets.new[match(as.character(Saturdaytweets.new$lang), selected), ]
+  Saturdaytweets.new<-subset(Saturdaytweets, lang %in% selected)
+  
+  g <- list(
+    scope = 'usa',
+    projection = list(type = 'albers usa'),
+    showland = TRUE,
+    landcolor = toRGB("gray95"),
+    subunitcolor = toRGB("gray85"),
+    countrycolor = toRGB("gray85"),
+    countrywidth = 0.5,
+    subunitwidth = 0.5
+  )
+  
+  p <- plot_geo(Saturdaytweets.new, lat = ~place_lat, lon = ~place_lon) %>%
+    add_markers( text = ~paste(lang),
+                 color = ~lang, symbol = I("circle"), hoverinfo = "text") %>%
+    layout(geo = g)
+  return(p)
+  }
+}
+
+lanplot("Saturday","")
+```
+
+#count the word frequency
+```{r}
+tmp <- sample_n(Saturdaytweets,10)
+count <- tmp$text[1]
+count<- length(unlist(strsplit(count, " ")))
+a <- sapply(tmp$text, function(text){length(unlist(strsplit(text, " ")))})
+hist(a)
+```
+
+# word cloud
+```{r}
+getTermMatrix <- memoise(function(Day,content) {
+  # Careful not to let just any name slip in here; a
+  # malicious user could manipulate this value.
+  if (Day==Days[[1]]) {
+    d <- Saturdaytweets
+  }
+  else {
+    d <- Sundaytweets
+  }
+  if (content =="place") {
+    text <- tolower(unlist(strsplit(d$location, " ")))
+  }
+  else if(content == "tweet"){
+    text <- tolower(unlist(strsplit(d$text, " ")))
+  }
+  text <- sample(text,10000,replace = FALSE)
+  myCorpus = Corpus(VectorSource(text))
+  myCorpus = tm_map(myCorpus, removePunctuation)
+  myCorpus = tm_map(myCorpus, removeNumbers)
+  myCorpus = tm_map(myCorpus, removeWords,
+         c(stopwords("SMART"), "thy", "thou", "thee", "the", "and","usa", "but"))
+
+  myDTM = TermDocumentMatrix(myCorpus,
+              control = list(minWordLength = 1))
+  
+  m = as.matrix(myDTM)
+  
+  return(sort(rowSums(m), decreasing = TRUE))
+})
+
+Satplace <- getTermMatrix("Saturday","place")
+Sunplace <- getTermMatrix("Sunday","place")
+Sattweet <- getTermMatrix("Saturday","tweet")
+Suntweet <- getTermMatrix("Sunday","tweet")
+
+getmatrix <- function(Day,content){
+  if (Day==Days[[1]]) {
+    if (content=="place") {return(Satplace)}
+    else {return(Sattweet)}
+  }
+  else {
+    if (content=="place") {return(Sunplace)}
+    else {return(Suntweet)}
+  }
+}
+
+```
+
+#sentiment score
+```{r}
+score.sentiment = function(tweets, pos.words, neg.words, .progress='none')
+{
+  scores = laply(tweets, function(tweet, pos.words, neg.words) {
+    tweet = tolower(tweet)
+    words = unlist(strsplit(tweet, " "))
+    pos.matches = match(words, pos.words)
+    neg.matches = match(words, neg.words)
+    
+    pos.matches = !is.na(pos.matches)
+    neg.matches = !is.na(neg.matches)
+    
+    score = sum(pos.matches) - sum(neg.matches)
+    
+    return(score)
+  }, pos.words, neg.words, .progress=.progress )
+  
+  scores.df = data.frame(score=scores, text=tweets)
+  return(scores.df)
+}
+```
+
+
+```{r}
+save(Sattweet,Satplace,Suntweet,Sunplace,file = "wordcloud.Rdata")
+save(tweetmap,lanplot,getTermMatrix,score.sentiment,getmatrix,file = "function.Rdata")
+```
+
