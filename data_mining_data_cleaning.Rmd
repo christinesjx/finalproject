@@ -1,0 +1,91 @@
+---
+title: "Untitled"
+author: "Jiaxin Sun"
+date: "12/8/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+ipak <- function(pkg){
+    new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+    if (length(new.pkg)) 
+        install.packages(new.pkg, dependencies = TRUE)
+    sapply(pkg, require, character.only = TRUE)
+}
+packages <- c("data.table","RCurl","ROAuth,streamR","tidyr","ggplot2","grid","ggmap","stringr","twitteR","tm","plyr","dplyr","stringr")
+
+library(data.table)
+library(RCurl)
+library(ROAuth)
+library(streamR)
+library(tidyr)
+library(ggplot2)
+library(grid)
+library(ggmap)
+library(stringr)
+library(twitteR)
+library(tm)
+```
+
+#creat new twitter app:"MA_615_Final_Assignment"
+```{r}
+requestURL <- "https://api.twitter.com/oauth/request_token"
+accessURL <- "https://api.twitter.com/oauth/access_token"
+authURL <- "https://api.twitter.com/oauth/authorize"
+consumerKey <- "M99KX3sEfbUHMaB9QYwLqVrIU"
+consumerSecret <- "cMCD9gHv7TBCaz95SapYtroViXm8NvW2yOlbEPrqKzh0JbcXix"
+my_oauth <- OAuthFactory$new(consumerKey = consumerKey, consumerSecret = consumerSecret,requestURL = requestURL, accessURL = accessURL, authURL = authURL)
+my_oauth$handshake(cainfo = system.file("CurlSSL", "cacert.pem", package = "RCurl"))
+save(my_oauth, file = "my_oauth.Rdata")
+```
+
+# crawling data from twitter at Friday night/Saturday night
+```{r}
+load("my_oauth.Rdata")
+filename <- paste("tweetsSun",".json",sep = "")
+RDSfile <- paste("tweetsSun",".RDS",sep = "")
+keywords <- c("")
+filterStream(file.name = filename, 
+             locations=c(-125,25,-66,50), 
+             timeout = 3600*3, oauth=my_oauth)
+tweets.df <- parseTweets(filename)
+tweets.df <- as.data.table(tweets.df)
+saveRDS(tweets.df,RDSfile)
+
+```
+
+#data cleaning
+```{r}
+#drop useless column
+cleantweets <- function(tweets.df){
+  tweets.df[,c("favorited","retweet_count",
+             "source","retweeted","in_reply_to_screen_name",
+             "geo_enabled","protected","user_url","place_name",
+             "place_id","expanded_url","url"):=NULL]
+  tweets.df$text <- iconv(tweets.df$text, from = "latin1", to = "ASCII", sub="")
+  tweets.df$text <- gsub('http\\S+\\s*', '', tweets.df$text)
+  tweets.df$location <- iconv(tweets.df$location, from = "latin1", to = "ASCII", sub="")
+  tweets.df$description <- iconv(tweets.df$description, from = "latin1", to = "ASCII", sub="")
+  tweets.df[,c("Weekday","Date1","Date2","time","timezone","year"):=tstrsplit(created_at, " ", fixed=TRUE)]
+  tweets.df[,Date1 := paste(Date1,Date2)]
+  tweets.df[,EAST_Time := times(time)-times("05:00:00")]
+  tweets.df[,c("Date2","timezone","time"):=NULL]
+  return(tweets.df)
+}
+
+Saturdaytweets <- readRDS("tweets.RDS")
+Sundaytweets <- readRDS("tweetsSun.RDS")
+
+Saturdaytweets <- cleantweets(Saturdaytweets)
+Sundaytweets <- cleantweets(Sundaytweets)
+
+Saturdaytweets[,tag:=NULL]
+
+Days <<- list("Saturday" = "Saturday",
+              "Sunday" = "Sunday")
+
+save(Saturdaytweets,Sundaytweets,Days,file="weekendmidnight.Rdata")
+
+#compare time by tmp < times("5:00:00")
+```
